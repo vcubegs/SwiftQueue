@@ -29,8 +29,8 @@ public final class JobBuilder {
         return self
     }
 
-    /// Get id for single instance job
-    public var id: String {
+    /// Get uuid for single instance job
+    public var uuid: String {
         return info.uuid
     }
 
