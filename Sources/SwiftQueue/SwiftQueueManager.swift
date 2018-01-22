@@ -84,4 +84,9 @@ public final class SwiftQueueManager {
         }
     }
 
+    /// Peek queue information for diagnostic and logging purpose
+    public func peekQueue(group: String) -> QueueInfo {
+        let queue = getQueue(name: group)
+        return QueueInfo(name: group, queueCount: queue.operationCount, isSuspended: queue.isSuspended)
+    }
 }
