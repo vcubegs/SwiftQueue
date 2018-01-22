@@ -121,10 +121,16 @@ internal final class SwiftQueueJob: Operation, JobResult {
     private func completionFail(error: Swift.Error) {
         lastError = error
 
-        if info.retries > 0 {
+        switch info.retries {
+        case .limited(let value):
+            if value > 0 {
+                retryJob(retry: handler.onRetry(error: error))
+            } else {
+                onTerminate()
+            }
+            break
+        case .unlimited:
             retryJob(retry: handler.onRetry(error: error))
-        } else {
-            onTerminate()
         }
     }
 
@@ -135,21 +141,21 @@ internal final class SwiftQueueJob: Operation, JobResult {
         case .retry(let after):
             guard after > 0 else {
                 // Retry immediately
-                info.retries -= 1
+                info.retries.decreaseValue(by: 1)
                 self.run()
                 return
             }
 
             // Retry after time in parameter
             runInBackgroundAfter(after) { [weak self] in
-                self?.info.retries -= 1
+                self?.info.retries.decreaseValue(by: 1)
                 self?.run()
             }
         case .exponential(let initial):
             info.currentRepetition += 1
             let delay = info.currentRepetition == 1 ? initial : initial * pow(2, Double(info.currentRepetition - 1))
             runInBackgroundAfter(delay) { [weak self] in
-                self?.info.retries -= 1
+                self?.info.retries.decreaseValue(by: 1)
                 self?.run()
             }
         }
@@ -159,10 +165,12 @@ internal final class SwiftQueueJob: Operation, JobResult {
         lastError = nil
         info.currentRepetition = 0
 
-        guard info.runCount + 1 < info.maxRun else {
+        if case .limited(let limit) = info.maxRun {
             // Reached run limit
-            onTerminate()
-            return
+            guard info.runCount + 1 < limit else {
+                onTerminate()
+                return
+            }
         }
 
         guard info.interval > 0 else {
@@ -183,15 +191,16 @@ internal final class SwiftQueueJob: Operation, JobResult {
 extension SwiftQueueJob {
 
     convenience init?(dictionary: [String: Any], creator: [JobCreator]) {
-        guard let info = JobInfo(dictionary: dictionary) else {
+        guard let info = try? JobInfo(dictionary: dictionary) else {
+            assertionFailure("Unable to un-serialise job")
             return nil
         }
 
-        guard let job = SwiftQueue.createHandler(creators: creator, type: info.type, params: info.params) else {
+        guard let job = SwiftQueue.createHandler(creators: creator, type: info!.type, params: info!.params) else {
             return nil
         }
 
-        self.init(job: job, info: info)
+        self.init(job: job, info: info!)
     }
 
     convenience init?(json: String, creator: [JobCreator]) {
