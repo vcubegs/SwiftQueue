@@ -80,7 +80,7 @@ public final class JobBuilder {
     }
 
     /// Get maximum run count for periodic job
-    public var maxRun: Int {
+    public var maxRun: Limit {
         return info.maxRun
     }
 
@@ -132,7 +132,7 @@ public final class JobBuilder {
     }
 
     /// Get job max retries
-    public var maxRetries: Int {
+    public var maxRetries: Limit {
         return info.retries
     }
 
