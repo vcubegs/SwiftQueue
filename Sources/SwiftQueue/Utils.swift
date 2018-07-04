@@ -11,41 +11,11 @@ func runInBackgroundAfter(_ seconds: TimeInterval, callback: @escaping () -> Voi
     DispatchQueue.global(qos: DispatchQoS.QoSClass.utility).asyncAfter(deadline: delta, execute: callback)
 }
 
-func toJSON(_ obj: [String: Any]) -> String? {
-    assert(JSONSerialization.isValidJSONObject(obj))
-    let jsonData = try? JSONSerialization.data(withJSONObject: obj)
-    return jsonData.flatMap { String(data: $0, encoding: .utf8) }
-}
-
-func fromJSON(_ str: String) -> Any? {
-    return str.data(using: String.Encoding.utf8, allowLossyConversion: false)
-            .flatMap { try? JSONSerialization.jsonObject(with: $0, options: .allowFragments)  }
-}
-
-let dateFormatter: DateFormatter = {
-    let formatter = DateFormatter()
-    formatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ss.SSS'Z"
-    return formatter
-}()
-
 func assertNotEmptyString(_ string: @autoclosure () -> String, file: StaticString = #file, line: UInt = #line) {
     assert(!string().isEmpty, file: file, line: line)
 }
 
 internal extension Limit {
-
-    static func fromRawValue(value: Double) -> Limit {
-        return value < 0 ? Limit.unlimited : Limit.limited(value)
-    }
-
-    var rawValue: Double {
-        switch self {
-        case .unlimited:
-            return -1
-        case .limited(let val):
-            return val
-        }
-    }
 
     var validate: Bool {
         switch self {
@@ -66,12 +36,35 @@ internal extension Limit {
 
 }
 
+extension Limit: Codable {
+
+    private enum CodingKeys: String, CodingKey { case value }
+
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        let value = try values.decode(Double.self, forKey: .value)
+        self = value < 0 ? Limit.unlimited : Limit.limited(value)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        switch self {
+        case .unlimited:
+            try container.encode(-1, forKey: .value)
+        case .limited(let value):
+            assert(value >= 0)
+            try container.encode(value, forKey: .value)
+        }
+    }
+
+}
+
 extension Limit: Equatable {
 
     public static func == (lhs: Limit, rhs: Limit) -> Bool {
         switch (lhs, rhs) {
-        case let (.limited(a), .limited(b)):
-            return a == b
+        case let (.limited(lValue), .limited(rValue)):
+            return lValue == rValue
         case (.unlimited, .unlimited):
             return true
         default:
@@ -79,3 +72,11 @@ extension Limit: Equatable {
         }
     }
 }
+
+#if !swift(>=4.1)
+extension Sequence {
+    func compactMap<T>(_ fn: (Self.Iterator.Element) throws -> T?) rethrows -> [T] {
+        return try flatMap(fn)
+    }
+}
+#endif

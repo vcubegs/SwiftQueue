@@ -6,35 +6,71 @@ import Foundation
 
 internal final class SqOperationQueue: OperationQueue {
 
-    private let creator: JobCreator
-    private let persister: JobPersister?
-
     private let queueName: String
 
-    init(_ queueName: String, _ creator: JobCreator, _ persister: JobPersister? = nil, _ isPaused: Bool = false) {
+    private let creator: JobCreator
+    private let persister: JobPersister
+    private let serializer: JobInfoSerializer
+    private let logger: SwiftQueueLogger
+
+    private let trigger: Operation
+
+    init(_ queueName: String, _ creator: JobCreator, _ persister: JobPersister, _ serializer: JobInfoSerializer,
+         _ isSuspended: Bool, _ synchronous: Bool, _ logger: SwiftQueueLogger) {
+
+        self.queueName = queueName
+
         self.creator = creator
         self.persister = persister
-        self.queueName = queueName
+        self.serializer = serializer
+        self.logger = logger
+
+        self.trigger = TriggerOperation()
 
         super.init()
 
-        self.isSuspended = isPaused
+        self.isSuspended = isSuspended
         self.name = queueName
         self.maxConcurrentOperationCount = 1
 
-        loadSerializedTasks(name: queueName)
+        if synchronous {
+            self.loadSerializedTasks(name: queueName)
+        } else {
+            DispatchQueue.global(qos: DispatchQoS.QoSClass.utility).async { () -> Void in
+                self.loadSerializedTasks(name: queueName)
+            }
+        }
     }
 
     private func loadSerializedTasks(name: String) {
-        persister?.restore(queueName: name).flatMap { string -> SqOperation? in
-            SqOperation(json: string, creator: creator)
-        }.sorted {
-            $0.info.createTime < $1.info.createTime
-        }.forEach(addOperation)
+        persister.restore(queueName: name).compactMap { string -> SqOperation? in
+            do {
+                let info = try serializer.deserialize(json: string)
+                let job = creator.create(type: info.type, params: info.params)
+
+                return SqOperation(job: job, info: info, logger: logger)
+            } catch let error {
+                logger.log(.error, jobId: "UNKNOWN", message: "Unable to deserialize job error=\(error.localizedDescription)")
+                return nil
+            }
+        }.sorted { operation, operation2 in
+            operation.info.createTime < operation2.info.createTime
+        }.forEach { operation in
+            self.addOperationInternal(operation, wait: false)
+        }
+        super.addOperation(trigger)
     }
 
     override func addOperation(_ ope: Operation) {
+        self.addOperationInternal(ope, wait: true)
+    }
+
+    private func addOperationInternal(_ ope: Operation, wait: Bool) {
         guard !ope.isFinished else { return }
+
+        if wait {
+            ope.addDependency(trigger)
+        }
 
         guard let job = ope as? SqOperation else {
             // Not a job Task I don't care
@@ -50,13 +86,23 @@ internal final class SqOperationQueue: OperationQueue {
         }
 
         // Serialize this operation
-        if job.info.isPersisted, let sp = persister, let data = job.toJSONString() {
-            sp.put(queueName: queueName, taskId: job.info.uuid, data: data)
+        if job.info.isPersisted {
+            persistJob(job: job)
         }
         job.completionBlock = { [weak self] in
             self?.completed(job)
         }
         super.addOperation(job)
+    }
+
+    func persistJob(job: SqOperation) {
+        do {
+            let data = try serializer.serialize(info: job.info)
+            persister.put(queueName: queueName, taskId: job.info.uuid, data: data)
+        } catch let error {
+            // In this case we still try to run the job
+            logger.log(.error, jobId: job.info.uuid, message: "Unable to serialize job error=\(error.localizedDescription)")
+        }
     }
 
     func cancelOperations(tag: String) {
@@ -73,8 +119,8 @@ internal final class SqOperationQueue: OperationQueue {
 
     private func completed(_ job: SqOperation) {
         // Remove this operation from serialization
-        if job.info.isPersisted, let sp = persister {
-            sp.remove(queueName: queueName, taskId: job.info.uuid)
+        if job.info.isPersisted {
+            persister.remove(queueName: queueName, taskId: job.info.uuid)
         }
 
         job.remove()
@@ -85,3 +131,5 @@ internal final class SqOperationQueue: OperationQueue {
     }
 
 }
+
+internal class TriggerOperation: Operation {}

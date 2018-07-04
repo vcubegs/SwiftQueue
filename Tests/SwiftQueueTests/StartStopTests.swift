@@ -13,16 +13,17 @@ class StartStopTests: XCTestCase {
 
         let creator = TestCreator([type: job])
 
-        let manager = SwiftQueueManager(creator: creator)
-
-        manager.pause()
+        let manager = SwiftQueueManagerBuilder(creator: creator)
+                .set(persister: NoSerializer.shared)
+                .set(isSuspended: true)
+                .build()
 
         JobBuilder(type: type).schedule(manager: manager)
 
         // No run
         job.assertNoRun()
 
-        manager.start()
+        manager.isSuspended = false
 
         job.awaitForRemoval()
         job.assertSingleCompletion()
@@ -33,22 +34,22 @@ class StartStopTests: XCTestCase {
 
         let creator = TestCreator([type: job])
 
-        let manager = SwiftQueueManager(creator: creator)
+        let manager = SwiftQueueManagerBuilder(creator: creator).set(persister: NoSerializer.shared).build()
 
-        manager.pause()
+        manager.isSuspended = true
 
         JobBuilder(type: type).periodic(limit: .limited(4), interval: 0).schedule(manager: manager)
 
         // No run
         job.assertNoRun()
 
-        manager.start()
-        manager.start()
-        manager.start()
-        manager.start()
-        manager.start()
-        manager.start()
-        manager.start()
+        manager.isSuspended = false
+        manager.isSuspended = false
+        manager.isSuspended = false
+        manager.isSuspended = false
+        manager.isSuspended = false
+        manager.isSuspended = false
+        manager.isSuspended = false
 
         job.awaitForRemoval()
 
@@ -57,33 +58,6 @@ class StartStopTests: XCTestCase {
         job.assertRetriedCount(expected: 0)
         job.assertCanceledCount(expected: 0)
         job.assertNoError()
-    }
-
-    func testPauseQueue() {
-        let (type1, job1) = (UUID().uuidString, TestJob())
-        let (type2, job2) = (UUID().uuidString, TestJob())
-
-        let creator = TestCreator([type1: job1, type2: job2])
-
-        let manager = SwiftQueueManager(creator: creator)
-
-        JobBuilder(type: type1).schedule(manager: manager)
-
-        // Even if pause, if the job is already scheduled it will run
-        manager.pause()
-
-        JobBuilder(type: type2).schedule(manager: manager)
-
-        job1.awaitForRemoval()
-        job1.assertSingleCompletion()
-
-        // Not run yet
-        job2.assertNoRun()
-
-        manager.start()
-
-        job2.awaitForRemoval()
-        job2.assertSingleCompletion()
     }
 
 }

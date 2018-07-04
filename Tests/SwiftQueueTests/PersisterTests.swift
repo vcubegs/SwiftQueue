@@ -22,13 +22,13 @@ class SerializerTests: XCTestCase {
                 .singleInstance(forId: job1Id)
                 .group(name: queueId)
                 .build(job: job1)
-                .toJSONString()!
+                .toJSONStringSafe()
 
         let task2 = JobBuilder(type: type2)
                 .singleInstance(forId: job2Id)
                 .group(name: queueId)
                 .build(job: job2)
-                .toJSONString()!
+                .toJSONStringSafe()
 
         // Should invert when deserialize
         let persister = PersisterTracker(key: UUID().uuidString)
@@ -44,7 +44,7 @@ class SerializerTests: XCTestCase {
         XCTAssertEqual(restore2.count, 1)
         XCTAssertEqual(restore2[0], queueId)
 
-        let manager = SwiftQueueManager(creator: creator, persister: persister)
+        let manager = SwiftQueueManagerBuilder(creator: creator).set(persister: persister).build()
 
         XCTAssertEqual(queueId, persister.restoreQueueName)
 
@@ -67,7 +67,7 @@ class SerializerTests: XCTestCase {
 
         let persister = PersisterTracker(key: UUID().uuidString)
 
-        let manager = SwiftQueueManager(creator: creator, persister: persister)
+        let manager = SwiftQueueManagerBuilder(creator: creator).set(persister: persister).build()
 
         JobBuilder(type: type1)
                 .singleInstance(forId: job1Id)
@@ -104,7 +104,7 @@ class SerializerTests: XCTestCase {
         let creator = TestCreator([type: job])
         let persister = PersisterTracker(key: UUID().uuidString)
 
-        let manager = SwiftQueueManager(creator: creator, persister: persister)
+        let manager = SwiftQueueManagerBuilder(creator: creator).set(persister: persister).build()
         JobBuilder(type: type)
                 .singleInstance(forId: taskID)
                 .group(name: queueId)
@@ -130,7 +130,7 @@ class SerializerTests: XCTestCase {
 
         let persister = PersisterTracker(key: UUID().uuidString)
 
-        let manager = SwiftQueueManager(creator: creator, persister: persister)
+        let manager = SwiftQueueManagerBuilder(creator: creator).set(persister: persister).build()
         JobBuilder(type: type)
                 .singleInstance(forId: taskID)
                 .group(name: queueId)
@@ -154,7 +154,7 @@ class SerializerTests: XCTestCase {
         let creator = TestCreator([type: job])
         let persister = PersisterTracker(key: UUID().uuidString)
 
-        let manager = SwiftQueueManager(creator: creator, persister: persister)
+        let manager = SwiftQueueManagerBuilder(creator: creator).set(persister: persister).build()
         JobBuilder(type: type)
                 .schedule(manager: manager)
 
@@ -180,7 +180,7 @@ class SerializerTests: XCTestCase {
 
         let persister = PersisterTracker(key: UUID().uuidString)
 
-        let manager = SwiftQueueManager(creator: creator, persister: persister)
+        let manager = SwiftQueueManagerBuilder(creator: creator).set(persister: persister).build()
 
         JobBuilder(type: type)
                 .singleInstance(forId: id)
@@ -197,6 +197,86 @@ class SerializerTests: XCTestCase {
 
         XCTAssertEqual([id], persister.removeJobUUID)
         XCTAssertEqual([group], persister.removeQueueName)
+    }
+
+    func testScheduleWhileDeserialize() {
+        let queueId = UUID().uuidString
+
+        let persister = PersisterTracker(key: UUID().uuidString)
+
+        var tasks = [String: TestJob]()
+
+        for i in 0..<100 {
+            let (type, job) = (UUID().uuidString, TestJob())
+
+            let task = JobBuilder(type: type)
+                    .singleInstance(forId: "\(i)")
+                    .group(name: queueId)
+                    .build(job: job)
+                    .toJSONStringSafe()
+
+            persister.put(queueName: queueId, taskId: "\(i)", data: task)
+
+            tasks[type] = job
+        }
+
+        let lastTaskType = UUID().uuidString
+        let lastJob = TestJob()
+
+        tasks[lastTaskType] = lastJob
+
+        let creator = TestCreator(tasks)
+        let manager = SwiftQueueManagerBuilder(creator: creator).set(persister: persister).set(synchronous: false).build()
+
+        JobBuilder(type: lastTaskType)
+                .singleInstance(forId: lastTaskType)
+                .group(name: queueId)
+                .persist(required: true)
+                .schedule(manager: manager)
+
+        lastJob.awaitForRemoval()
+
+        // At this point all the other jobs should be completed
+        manager.cancelAllOperations()
+
+        lastJob.assertSingleCompletion()
+
+        for (_, task) in tasks {
+            task.assertSingleCompletion()
+        }
+    }
+
+    func testCustomSerializer() {
+        let (type1, job1) = (UUID().uuidString, TestJob())
+
+        let persistance = PersisterTracker(key: UUID().uuidString)
+        let serializer = MemorySerializer()
+
+        let manager = SwiftQueueManagerBuilder(creator: TestCreator([type1: job1]))
+                .set(persister: persistance)
+                .set(serializer: serializer)
+                .set(isSuspended: true)
+                .build()
+
+        JobBuilder(type: type1)
+                .group(name: UUID().uuidString)
+                .persist(required: true)
+                .schedule(manager: manager)
+
+        // at this point the job should have been serialised
+        job1.assertNoRun()
+
+        // Re-create manager
+        let manager2 = SwiftQueueManagerBuilder(creator: TestCreator([type1: job1]))
+                .set(persister: persistance)
+                .set(serializer: serializer)
+                .set(isSuspended: false)
+                .build()
+
+        manager2.waitUntilAllOperationsAreFinished()
+
+        job1.awaitForRemoval()
+        job1.assertSingleCompletion()
     }
 
 }

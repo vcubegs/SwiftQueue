@@ -7,42 +7,35 @@ import Foundation
 
 /// Global manager to perform operations on all your queues/
 /// You will have to keep this instance. We highly recommend you to store this instance in a Singleton
-/// Creating and instance of this class will automatically un-serialise your jobs and schedule them 
+/// Creating and instance of this class will automatically un-serialize your jobs and schedule them
 public final class SwiftQueueManager {
 
     private let creator: JobCreator
-    private let persister: JobPersister?
+    private let persister: JobPersister
+    private let serializer: JobInfoSerializer
+
+    internal let logger: SwiftQueueLogger
+
+    /// Allow jobs in queue to be executed.
+    public var isSuspended: Bool {
+        didSet {
+            for element in manage.values {
+                element.isSuspended = isSuspended
+            }
+        }
+    }
 
     private var manage = [String: SqOperationQueue]()
 
-    private var isPaused = true
+    internal init(params: SqManagerParams) {
+        self.creator = params.creator
+        self.persister = params.persister
+        self.serializer = params.serializer
+        self.logger = params.logger
+        self.isSuspended = params.isSuspended
 
-    /// Create a new QueueManager with creators to instantiate Job
-    public init(creator: JobCreator, persister: JobPersister? = nil) {
-        self.creator = creator
-        self.persister = persister
-
-        if let data = persister {
-            for queueName in data.restore() {
-                manage[queueName] = SqOperationQueue(queueName, creator, persister, isPaused)
-            }
-        }
-        start()
-    }
-
-    /// Jobs queued will run again
-    public func start() {
-        isPaused = false
-        for element in manage.values {
-            element.isSuspended = false
-        }
-    }
-
-    /// Avoid new job to run. Not application for current running job.
-    public func pause() {
-        isPaused = true
-        for element in manage.values {
-            element.isSuspended = true
+        for queueName in persister.restore() {
+            manage[queueName] = SqOperationQueue(queueName, creator, persister, serializer, isSuspended, params.synchronous, logger)
         }
     }
 
@@ -51,7 +44,8 @@ public final class SwiftQueueManager {
     }
 
     private func createQueue(queueName: String) -> SqOperationQueue {
-        let queue = SqOperationQueue(queueName, creator, persister, isPaused)
+        // At this point the queue should be totally new so it's safe to start the queue synchronously
+        let queue = SqOperationQueue(queueName, creator, persister, serializer, isSuspended, true, logger)
         manage[queueName] = queue
         return queue
     }
@@ -84,6 +78,100 @@ public final class SwiftQueueManager {
         for element in manage.values {
             element.waitUntilAllOperationsAreFinished()
         }
+    }
+
+    /// number of queue
+    public func queueCount() -> Int {
+        return manage.values.count
+    }
+
+    /// number of jobs for all queues
+    public func jobCount() -> Int {
+        var count = 0
+        for element in manage.values {
+            count += element.operationCount
+        }
+        return count
+    }
+
+}
+
+internal class SqManagerParams {
+
+    let creator: JobCreator
+
+    var persister: JobPersister
+
+    var serializer: JobInfoSerializer
+
+    var logger: SwiftQueueLogger
+
+    var isSuspended: Bool
+
+    var synchronous: Bool
+
+    init(creator: JobCreator,
+         persister: JobPersister = UserDefaultsPersister(),
+         serializer: JobInfoSerializer = DecodableSerializer(),
+         logger: SwiftQueueLogger = NoLogger.shared,
+         isSuspended: Bool = false,
+         synchronous: Bool = true) {
+
+        self.creator = creator
+        self.persister = persister
+        self.serializer = serializer
+        self.logger = logger
+        self.isSuspended = isSuspended
+        self.synchronous = synchronous
+    }
+
+}
+
+/// Entry point to create a `SwiftQueueManager`
+public final class SwiftQueueManagerBuilder {
+
+    private var params: SqManagerParams
+
+    /// Creator to convert `JobInfo.type` to `Job` instance
+    public init(creator: JobCreator) {
+        params = SqManagerParams(creator: creator)
+    }
+
+    /// Custom way of saving `JobInfo`. Will use `UserDefaultsPersister` by default
+    public func set(persister: JobPersister) -> Self {
+        params.persister = persister
+        return self
+    }
+
+    /// Custom way of serializing `JobInfo`. Will use `DecodableSerializer` by default
+    public func set(serializer: JobInfoSerializer) -> Self {
+        params.serializer = serializer
+        return self
+    }
+
+    /// Internal event logger. `NoLogger` by default
+    /// Use `ConsoleLogger` to print to the console. This is not recommended since the print is synchronous
+    /// and it can be and expensive operation. Prefer using a asynchronous logger like `SwiftyBeaver`.
+    public func set(logger: SwiftQueueLogger) -> Self {
+        params.logger = logger
+        return self
+    }
+
+    /// Start jobs directly when they are scheduled or not. `false` by default
+    public func set(isSuspended: Bool) -> Self {
+        params.isSuspended = isSuspended
+        return self
+    }
+
+    /// Deserialize jobs synchronously after creating the `SwiftQueueManager` instance. `true` by default
+    public func set(synchronous: Bool) -> Self {
+        params.synchronous = synchronous
+        return self
+    }
+
+    /// Get an instance of `SwiftQueueManager`
+    public func build() -> SwiftQueueManager {
+        return SwiftQueueManager(params: params)
     }
 
 }

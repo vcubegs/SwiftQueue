@@ -14,7 +14,7 @@ class SwiftQueueManagerTests: XCTestCase {
 
         let creator = TestCreator([type: job])
 
-        let manager = SwiftQueueManager(creator: creator)
+        let manager = SwiftQueueManagerBuilder(creator: creator).set(persister: NoSerializer.shared).build()
         JobBuilder(type: type)
                 .internet(atLeast: .wifi)
                 .schedule(manager: manager)
@@ -34,7 +34,7 @@ class SwiftQueueManagerTests: XCTestCase {
 
         let persister = PersisterTracker(key: UUID().uuidString)
 
-        let manager = SwiftQueueManager(creator: creator, persister: persister)
+        let manager = SwiftQueueManagerBuilder(creator: creator).set(persister: persister).build()
 
         JobBuilder(type: type)
                 .singleInstance(forId: id)
@@ -66,7 +66,7 @@ class SwiftQueueManagerTests: XCTestCase {
 
         let persister = PersisterTracker(key: UUID().uuidString)
 
-        let manager = SwiftQueueManager(creator: creator, persister: persister)
+        let manager = SwiftQueueManagerBuilder(creator: creator).set(persister: persister).build()
 
         JobBuilder(type: type)
                 .singleInstance(forId: id)
@@ -98,7 +98,7 @@ class SwiftQueueManagerTests: XCTestCase {
 
         let persister = PersisterTracker(key: UUID().uuidString)
 
-        let manager = SwiftQueueManager(creator: creator, persister: persister)
+        let manager = SwiftQueueManagerBuilder(creator: creator).set(persister: persister).build()
 
         JobBuilder(type: type)
                 .singleInstance(forId: id)
@@ -121,7 +121,7 @@ class SwiftQueueManagerTests: XCTestCase {
     }
 
     func testAddOperationNotJobTask() {
-        let queue = SqOperationQueue(UUID().uuidString, TestCreator([:]))
+        let queue = SqOperationQueue(id: UUID().uuidString)
         let operation = Operation()
         queue.addOperation(operation) // Should not crash
     }
@@ -136,6 +136,23 @@ class SwiftQueueManagerTests: XCTestCase {
         XCTAssertNotEqual(Limit.unlimited, Limit.limited(1))
         XCTAssertNotEqual(Limit.unlimited, Limit.limited(0))
         XCTAssertNotEqual(Limit.unlimited, Limit.limited(-1))
+    }
+
+}
+
+extension SqOperationQueue {
+
+    convenience init(id: String) {
+        self.init(id, TestCreator([:]), UserDefaultsPersister(), DecodableSerializer(), false, true, NoLogger.shared)
+
+    }
+
+}
+
+extension JobBuilder {
+
+    internal func build(job: Job) -> SqOperation {
+        return self.build(job: job, logger: NoLogger.shared)
     }
 
 }

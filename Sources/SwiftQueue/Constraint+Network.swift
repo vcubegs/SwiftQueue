@@ -8,7 +8,7 @@ import Reachability
 #endif
 
 /// Kind of connectivity required for the job to run
-public enum NetworkType: Int {
+public enum NetworkType: Int, Codable {
     /// Job will run regardless the connectivity of the platform
     case any = 0
     /// Requires at least cellular such as 2G, 3G, 4G, LTE or Wifi
@@ -48,6 +48,8 @@ internal final class NetworkConstraint: JobConstraint {
             reachability.whenReachable = nil
             operation.run()
         }
+
+        operation.logger.log(.verbose, jobId: operation.info.uuid, message: "Unsatisfied network requirement")
         return false
     }
 
@@ -65,19 +67,6 @@ internal final class NetworkConstraint: JobConstraint {
 }
 #else
 
-internal final class NetworkConstraint: JobConstraint {
-
-    func willSchedule(queue: SqOperationQueue, operation: SqOperation) throws {
-
-    }
-
-    func willRun(operation: SqOperation) throws {
-
-    }
-
-    func run(operation: SqOperation) -> Bool {
-        return true
-    }
-}
+internal final class NetworkConstraint: DefaultNoConstraint {}
 
 #endif

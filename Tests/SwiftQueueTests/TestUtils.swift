@@ -106,7 +106,8 @@ class TestJob: Job {
         guard let base: SwiftQueueError = lastError as? SwiftQueueError else { return }
         switch (base, queueError) {
 
-        case let (.onRetryCancel(l), .onRetryCancel(r)): XCTAssertEqual(l as? JobError, r as? JobError, file: file, line: line)
+        case let (.onRetryCancel(lErr), .onRetryCancel(rErr)):
+            XCTAssertEqual(lErr as? JobError, rErr as? JobError, file: file, line: line)
 
         case (.duplicate, .duplicate): return
         case (.deadline, .deadline): return
@@ -188,7 +189,7 @@ class PersisterTracker: UserDefaultsPersister {
 
 class JobError: Error {
 
-    private let id = UUID().uuidString
+    let id = UUID().uuidString
 
 }
 
@@ -196,5 +197,42 @@ extension JobError: Equatable {
 
     public static func == (lhs: JobError, rhs: JobError) -> Bool {
         return lhs.id == rhs.id
+    }
+}
+
+extension SqOperation {
+
+    func toJSONStringSafe() -> String {
+        return (try? DecodableSerializer().serialize(info: self.info)) ?? "{}"
+    }
+
+}
+
+class NoSerializer: JobPersister {
+
+    public static let shared = NoSerializer()
+
+    private init() {}
+
+    func restore() -> [String] { return [] }
+
+    func restore(queueName: String) -> [String] { return [] }
+
+    func put(queueName: String, taskId: String, data: String) {}
+
+    func remove(queueName: String, taskId: String) {}
+}
+
+class MemorySerializer: JobInfoSerializer {
+
+    private var data: [String: JobInfo] = [:]
+
+    func serialize(info: JobInfo) throws -> String {
+        data[info.uuid] = info
+        return info.uuid
+    }
+
+    func deserialize(json: String) throws -> JobInfo {
+        return data[json] ?? JobInfo(type: json)
     }
 }
