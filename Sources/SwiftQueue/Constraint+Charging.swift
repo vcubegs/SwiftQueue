@@ -33,7 +33,7 @@ internal final class BatteryChargingConstraint: JobConstraint {
             return true
         }
 
-        NotificationCenter.default.addObserver(self, selector: Selector(("batteryStateDidChange:")), name: NSNotification.Name.UIDeviceBatteryStateDidChange, object: nil)
+        NotificationCenter.default.addObserver(self, selector: Selector(("batteryStateDidChange:")), name: UIDevice.batteryStateDidChangeNotification, object: nil)
 
         operation.logger.log(.verbose, jobId: operation.info.uuid, message: "Unsatisfied charging requirement")
         return false
